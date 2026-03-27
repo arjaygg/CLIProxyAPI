@@ -352,6 +352,14 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
 		}
 	}
+
+	if c != nil && logging.GetSessionID(parentCtx) == "" {
+		if sid := logging.GetGinSessionID(c); sid != "" {
+			parentCtx = logging.WithSessionID(parentCtx, sid)
+			parentCtx = WithExecutionSessionID(parentCtx, sid)
+		}
+	}
+
 	newCtx, cancel := context.WithCancel(parentCtx)
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
