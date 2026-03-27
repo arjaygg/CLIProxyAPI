@@ -1,10 +1,19 @@
 package routing
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/tidwall/gjson"
 )
+
+var xmlTagRe = regexp.MustCompile(`</?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^>]*)?>`)
+
+// stripXMLTags removes client-injected XML markup (e.g. <system-reminder>,
+// <user_info>, <attached_files>) so routing rules evaluate semantic content only.
+func stripXMLTags(s string) string {
+	return strings.TrimSpace(xmlTagRe.ReplaceAllString(s, ""))
+}
 
 // RequestSignals holds extracted features from a request body for rule evaluation.
 type RequestSignals struct {
@@ -24,6 +33,24 @@ func Analyze(rawJSON []byte, modelName string) RequestSignals {
 		RequestedModel: modelName,
 	}
 
+	// Anthropic format: top-level "system" field (string or array of content blocks).
+	if sysField := gjson.GetBytes(rawJSON, "system"); sysField.Exists() {
+		if sysField.Type == gjson.String {
+			signals.SystemPrompt = sysField.String()
+		} else if sysField.IsArray() {
+			var sb strings.Builder
+			for _, block := range sysField.Array() {
+				if block.Get("type").String() == "text" {
+					if sb.Len() > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(block.Get("text").String())
+				}
+			}
+			signals.SystemPrompt = sb.String()
+		}
+	}
+
 	messages := gjson.GetBytes(rawJSON, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return signals
@@ -38,13 +65,14 @@ func Analyze(rawJSON []byte, modelName string) RequestSignals {
 
 		signals.TotalMessageLength += len(content)
 
+		// OpenAI format: system prompt as a message with role "system".
 		if role == "system" && signals.SystemPrompt == "" {
 			signals.SystemPrompt = content
 		}
 
 		if role == "user" {
-			signals.LastUserMessage = content
-			signals.LastUserMessageLen = len(content)
+			signals.LastUserMessage = stripXMLTags(content)
+			signals.LastUserMessageLen = len(signals.LastUserMessage)
 		}
 
 		// Check for tool blocks in content array
