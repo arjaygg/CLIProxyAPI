@@ -74,11 +74,11 @@ type ToolCallAccumulator struct {
 //
 // Returns:
 //   - []string: A slice of strings, each containing an Anthropic-compatible JSON response.
-func ConvertOpenAIResponseToClaude(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []string {
+func ConvertOpenAIResponseToClaude(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []string {
 	if *param == nil {
 		*param = &ConvertOpenAIResponseToAnthropicParams{
 			MessageID:                   "",
-			Model:                       "",
+			Model:                       modelName,
 			CreatedAt:                   0,
 			ToolNameMap:                 nil,
 			SawToolCall:                 false,
@@ -113,7 +113,7 @@ func ConvertOpenAIResponseToClaude(_ context.Context, _ string, originalRequestR
 
 	streamResult := gjson.GetBytes(originalRequestRawJSON, "stream")
 	if !streamResult.Exists() || (streamResult.Exists() && streamResult.Type == gjson.False) {
-		return convertOpenAINonStreamingToAnthropic(rawJSON)
+		return convertOpenAINonStreamingToAnthropic(rawJSON, modelName)
 	} else {
 		return convertOpenAIStreamingChunkToAnthropic(rawJSON, (*param).(*ConvertOpenAIResponseToAnthropicParams))
 	}
@@ -382,12 +382,16 @@ func convertOpenAIDoneToAnthropic(param *ConvertOpenAIResponseToAnthropicParams)
 }
 
 // convertOpenAINonStreamingToAnthropic converts OpenAI non-streaming response to Anthropic format
-func convertOpenAINonStreamingToAnthropic(rawJSON []byte) []string {
+func convertOpenAINonStreamingToAnthropic(rawJSON []byte, modelName string) []string {
 	root := gjson.ParseBytes(rawJSON)
 
 	out := `{"id":"","type":"message","role":"assistant","model":"","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}`
 	out, _ = sjson.Set(out, "id", root.Get("id").String())
-	out, _ = sjson.Set(out, "model", root.Get("model").String())
+	effectiveModel := root.Get("model").String()
+	if effectiveModel == "" {
+		effectiveModel = modelName
+	}
+	out, _ = sjson.Set(out, "model", effectiveModel)
 
 	// Process message content and tool calls
 	if choices := root.Get("choices"); choices.Exists() && choices.IsArray() && len(choices.Array()) > 0 {
@@ -553,14 +557,18 @@ func stopTextContentBlock(param *ConvertOpenAIResponseToAnthropicParams, results
 //
 // Returns:
 //   - string: An Anthropic-compatible JSON response.
-func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) string {
+func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) string {
 	_ = requestRawJSON
 
 	root := gjson.ParseBytes(rawJSON)
 	toolNameMap := util.ToolNameMapFromClaudeRequest(originalRequestRawJSON)
 	out := `{"id":"","type":"message","role":"assistant","model":"","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}`
 	out, _ = sjson.Set(out, "id", root.Get("id").String())
-	out, _ = sjson.Set(out, "model", root.Get("model").String())
+	effectiveModel := root.Get("model").String()
+	if effectiveModel == "" {
+		effectiveModel = modelName
+	}
+	out, _ = sjson.Set(out, "model", effectiveModel)
 
 	hasToolCall := false
 	stopReasonSet := false
