@@ -33,6 +33,21 @@ func NewEngine(cfg config.ModelRoutingConfig) *Engine {
 	return e
 }
 
+// SetConfig replaces the engine configuration atomically.
+func (e *Engine) SetConfig(cfg config.ModelRoutingConfig) {
+	sorted := make([]config.ModelRoutingRule, len(cfg.Rules))
+	copy(sorted, cfg.Rules)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Priority < sorted[j].Priority
+	})
+
+	e.mu.Lock()
+	e.enabled = cfg.Enabled
+	e.dryRun = cfg.DryRun
+	e.defaultModel = cfg.DefaultModel
+	e.rules = sorted
+	e.mu.Unlock()
+}
 
 // SetEnabled toggles the engine on/off.
 func (e *Engine) SetEnabled(enabled bool) {
