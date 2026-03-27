@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +45,49 @@ func newTestServer(t *testing.T) *Server {
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	return NewServer(cfg, authManager, accessManager, configPath)
+}
+
+func TestUpdateClients_InitializesModelRouterFromReloadedConfig(t *testing.T) {
+	server := newTestServer(t)
+
+	if server.modelRouter != nil {
+		t.Fatal("expected model router to be nil before reload")
+	}
+
+	cfg := server.cfg
+	cfg.ModelRouting.Enabled = true
+	cfg.ModelRouting.Rules = []proxyconfig.ModelRoutingRule{
+		{
+			Name:        "route code to gpt",
+			TargetModel: "gpt-5.4",
+			Priority:    10,
+			Conditions: []proxyconfig.ModelRoutingCondition{
+				{Type: "has-code-blocks", Operator: "equals", Value: "true"},
+			},
+		},
+	}
+
+	server.UpdateClients(cfg)
+
+	if server.modelRouter == nil {
+		t.Fatal("expected model router to be initialized after reload")
+	}
+	if server.handlers == nil || server.handlers.ModelRouter == nil {
+		t.Fatal("expected handlers to receive the initialized model router")
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{"role": "user", "content": "fix:\n```go\nfunc main() {}\n```"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	if got := server.modelRouter.Evaluate(body, "gemini-2.5-flash"); got != "gpt-5.4" {
+		t.Fatalf("unexpected routed model: got %q want %q", got, "gpt-5.4")
+	}
 }
 
 // TestUpdateClients_PreservesManagementRoutesWithLocalPassword verifies fix edf43d2e:

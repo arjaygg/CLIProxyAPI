@@ -28,6 +28,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -987,6 +988,21 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	managementasset.SetCurrentConfig(cfg)
 	// Save YAML snapshot for next comparison
 	s.oldConfigYaml, _ = yaml.Marshal(cfg)
+
+	if s.modelRouter == nil {
+		if cfg.ModelRouting.Enabled || len(cfg.ModelRouting.Rules) > 0 {
+			engine := routing.NewEngine(cfg.ModelRouting)
+			s.modelRouter = engine
+			if s.handlers != nil {
+				s.handlers.ModelRouter = engine
+			}
+		}
+	} else if engine, ok := s.modelRouter.(*routing.Engine); ok {
+		engine.SetConfig(cfg.ModelRouting)
+		if s.handlers != nil {
+			s.handlers.ModelRouter = engine
+		}
+	}
 
 	s.handlers.UpdateClients(&cfg.SDKConfig)
 
