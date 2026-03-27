@@ -43,12 +43,22 @@ func GinLogrusLogger() gin.HandlerFunc {
 		path := c.Request.URL.Path
 		raw := util.MaskSensitiveQuery(c.Request.URL.RawQuery)
 
-		// Only generate request ID for AI API paths
+		isAI := isAIAPIPath(path)
+
+		// Only generate request ID and extract session ID for AI API paths
 		var requestID string
-		if isAIAPIPath(path) {
+		var sessionID string
+		if isAI {
 			requestID = GenerateRequestID()
 			SetGinRequestID(c, requestID)
 			ctx := WithRequestID(c.Request.Context(), requestID)
+
+			sessionID = ExtractSessionID(c)
+			if sessionID != "" {
+				SetGinSessionID(c, sessionID)
+				ctx = WithSessionID(ctx, sessionID)
+			}
+
 			c.Request = c.Request.WithContext(ctx)
 		}
 
@@ -82,7 +92,21 @@ func GinLogrusLogger() gin.HandlerFunc {
 			logLine = logLine + " | " + errorMessage
 		}
 
-		entry := log.WithField("request_id", requestID)
+		fields := log.Fields{"request_id": requestID}
+
+		if isAI {
+			if modelName := GetGinModelName(c); modelName != "" {
+				fields["model"] = modelName
+			}
+			if ua := c.GetHeader("User-Agent"); ua != "" {
+				fields["ua"] = truncateUA(ua)
+			}
+			if sessionID != "" {
+				fields["session_id"] = sessionID
+			}
+		}
+
+		entry := log.WithFields(fields)
 
 		switch {
 		case statusCode >= http.StatusInternalServerError:
@@ -93,6 +117,15 @@ func GinLogrusLogger() gin.HandlerFunc {
 			entry.Info(logLine)
 		}
 	}
+}
+
+// truncateUA extracts the product/version from a User-Agent string.
+// e.g. "claude-cli/2.1.85 (external, cli)" -> "claude-cli/2.1.85"
+func truncateUA(ua string) string {
+	if idx := strings.IndexByte(ua, ' '); idx > 0 {
+		return ua[:idx]
+	}
+	return ua
 }
 
 // isAIAPIPath checks if the given path is an AI API endpoint that should have request ID tracking.
